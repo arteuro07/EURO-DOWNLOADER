@@ -3,6 +3,10 @@ package com.euro.downloader;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.database.Cursor;
+import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -17,6 +21,13 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.OutputStream;
+import java.util.concurrent.Future;
+import dev.ffmpegkit_maintained.ytdlp.YtDlp;
+import dev.ffmpegkit_maintained.ytdlp.YtDlpRequest;
+import dev.ffmpegkit_maintained.ytdlp.YtDlpResponse;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
@@ -63,9 +74,9 @@ public class MainActivity extends Activity {
         space(root, 8);
         root.addView(text("DOWNLOADER Max", 28, true));
         space(root, 8);
-        root.addView(text("Télécharge les fichiers directs et les vidéos accessibles en URL directe. Les pages web seules ne seront plus enregistrées comme de fausses vidéos.", 15, false));
+        root.addView(text("Colle un lien de vidéo depuis YouTube, TikTok, Facebook, Instagram et de nombreux autres sites. Le moteur tente d’extraire la vidéo ; les fichiers directs restent pris en charge.", 15, false));
         space(root, 24);
-        root.addView(text("Lien direct du fichier ou de la vidéo", 16, true));
+        root.addView(text("Lien de la vidéo ou fichier direct", 16, true));
         space(root, 8);
 
         urlInput = new EditText(this);
@@ -79,12 +90,12 @@ public class MainActivity extends Activity {
 
         space(root, 14);
         downloadButton = new Button(this);
-        downloadButton.setText("Vérifier puis télécharger");
+        downloadButton.setText("Analyser et télécharger");
         root.addView(downloadButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
         space(root, 24);
         root.addView(text("État", 17, true));
         space(root, 8);
-        status = text("Prêt. Colle une URL directe autorisée vers un fichier vidéo, audio ou document.", 14, false);
+        status = text("Prêt. Colle un lien de vidéo public ou une URL directe.", 14, false);
         status.setPadding(dp(14), dp(14), dp(14), dp(14));
         status.setBackgroundColor(Color.WHITE);
         root.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -137,11 +148,9 @@ public class MainActivity extends Activity {
 
                 String type = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
                 String finalHost = Uri.parse(finalUrl).getHost();
-                if (type.contains("text/html") || type.contains("application/xhtml")) {
-                    runOnUiThread(() -> {
-                        status.setText("Lien refusé : le site a renvoyé une page web HTML, pas le fichier vidéo. Ouvre la vidéo sur le site et utilise un lien direct de fichier si la plateforme le permet. Les liens de page ne sont pas encore extraits automatiquement.");
-                        downloadButton.setEnabled(true);
-                    });
+                if (type.contains("text/html") || type.contains("application/xhtml") || type.isEmpty()) {
+                    if (connection != null) connection.disconnect();
+                    startExtractor(raw);
                     return;
                 }
 
