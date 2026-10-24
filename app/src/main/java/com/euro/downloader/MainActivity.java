@@ -141,6 +141,15 @@ public class MainActivity extends Activity {
         if (imm != null) imm.hideSoftInputFromWindow(urlInput.getWindowToken(), 0);
 
         downloadButton.setEnabled(false);
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        if (host.equals("tiktok.com") || host.endsWith(".tiktok.com") ||
+                host.equals("youtube.com") || host.endsWith(".youtube.com") ||
+                host.equals("youtu.be") || host.equals("instagram.com") || host.endsWith(".instagram.com") ||
+                host.equals("facebook.com") || host.endsWith(".facebook.com") ||
+                host.equals("fb.watch") || host.equals("vm.tiktok.com") || host.equals("vt.tiktok.com")) {
+            startExtractor(raw);
+            return;
+        }
         status.setText("Vérification du lien et du type de contenu…");
 
         new Thread(() -> {
@@ -213,16 +222,27 @@ public class MainActivity extends Activity {
                         .addOption("-f", "best[height<=1080]/best")
                         .addOption("--no-playlist")
                         .addOption("--no-warnings")
+                        .addOption("--no-write-info-json")
+                        .addOption("--no-write-thumbnail")
                         .addOption("--newline");
                 runOnUiThread(() -> status.setText("Analyse de la page… recherche du flux vidéo."));
                 Future<YtDlpResponse> task = YtDlp.executeAsync(request, (progress, eta, line) -> {
-                    final String detail = (line == null || line.trim().isEmpty()) ? "" : "\\n" + line;
-                    runOnUiThread(() -> status.setText("TÉLÉCHARGEMENT : " + Math.round(progress) + "%\\n" +
+                    final String detail = (line == null || line.trim().isEmpty()) ? "" : "\n" + line;
+                    runOnUiThread(() -> status.setText("TÉLÉCHARGEMENT : " + Math.round(progress) + "%\n" +
                             (eta > 0 ? "Temps restant estimé : " + eta + " s" : "Extraction en cours") + detail));
                 });
                 YtDlpResponse response = task.get();
                 if (response == null || !response.isSuccess()) {
-                    throw new IllegalStateException("Extraction impossible. Le site peut être incompatible, privé ou nécessiter une connexion.");
+                    String details = "";
+                    if (response != null) {
+                        String err = response.getErrorOutput();
+                        String out = response.getOutput();
+                        if (err != null && !err.trim().isEmpty()) details = err.trim();
+                        else if (out != null && !out.trim().isEmpty()) details = out.trim();
+                        if (details.length() > 900) details = details.substring(details.length() - 900);
+                    }
+                    throw new IllegalStateException("Le moteur n’a pas pu extraire cette vidéo." +
+                            (details.isEmpty() ? " Vérifie que le lien est public et réessaie." : "\nDétail technique :\n" + details));
                 }
                 File[] files = targetDir.listFiles();
                 File newest = null;
@@ -235,7 +255,7 @@ public class MainActivity extends Activity {
                 final File downloaded = newest;
                 copyToPublicDownloads(downloaded);
                 runOnUiThread(() -> {
-                    status.setText("✓ TÉLÉCHARGEMENT TERMINÉ\\n\\nFichier : Download/" + downloaded.getName());
+                    status.setText("✓ TÉLÉCHARGEMENT TERMINÉ\n\nFichier : Download/" + downloaded.getName());
                     downloadButton.setEnabled(true);
                     Toast.makeText(this, "Vidéo enregistrée dans Download", Toast.LENGTH_LONG).show();
                 });
@@ -244,7 +264,7 @@ public class MainActivity extends Activity {
                 if (msg == null || msg.trim().isEmpty()) msg = e.getClass().getSimpleName();
                 final String error = msg;
                 runOnUiThread(() -> {
-                    status.setText("ÉCHEC DE L’EXTRACTION\\n" + error + "\\nEssaie un lien public accessible. Certaines plateformes imposent des restrictions.");
+                    status.setText("ÉCHEC DE L’EXTRACTION\n" + error + "\nEssaie un lien public accessible. Certaines plateformes imposent des restrictions.");
                     downloadButton.setEnabled(true);
                 });
             }
