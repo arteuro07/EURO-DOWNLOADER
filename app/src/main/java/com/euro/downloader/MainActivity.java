@@ -6,7 +6,6 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.graphics.Typeface;
@@ -18,12 +17,16 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private EditText urlInput;
     private TextView status;
+    private Button downloadButton;
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -46,10 +49,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(22), dp(28), dp(22), dp(24));
@@ -59,121 +60,167 @@ public class MainActivity extends Activity {
         TextView brand = text("EURO", 16, true);
         brand.setTextColor(Color.rgb(0, 110, 230));
         root.addView(brand);
-
         space(root, 8);
         root.addView(text("DOWNLOADER Max", 28, true));
         space(root, 8);
-        root.addView(text(
-            "Télécharge tes fichiers dans le dossier public Download de ton téléphone.",
-            15, false
-        ));
-
-        space(root, 28);
-        root.addView(text("Lien du fichier", 16, true));
+        root.addView(text("Télécharge les fichiers directs et les vidéos accessibles en URL directe. Les pages web seules ne seront plus enregistrées comme de fausses vidéos.", 15, false));
+        space(root, 24);
+        root.addView(text("Lien direct du fichier ou de la vidéo", 16, true));
         space(root, 8);
 
         urlInput = new EditText(this);
         urlInput.setSingleLine(true);
         urlInput.setTextSize(15);
-        urlInput.setHint("https://exemple.com/fichier.zip");
-        urlInput.setInputType( android.text.InputType.TYPE_CLASS_TEXT
-                | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        urlInput.setHint("https://site.com/video.mp4");
+        urlInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         urlInput.setPadding(dp(14), dp(12), dp(14), dp(12));
         urlInput.setBackgroundColor(Color.WHITE);
-        root.addView(urlInput, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+        root.addView(urlInput, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
 
         space(root, 14);
-        Button download = new Button(this);
-        download.setText("Télécharger");
-        root.addView(download, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
-
+        downloadButton = new Button(this);
+        downloadButton.setText("Vérifier puis télécharger");
+        root.addView(downloadButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
         space(root, 24);
-        root.addView(text("État du téléchargement", 17, true));
+        root.addView(text("État", 17, true));
         space(root, 8);
-
-        status = text(
-            "Prêt. Colle un lien direct vers un fichier autorisé.",
-            14, false
-        );
+        status = text("Prêt. Colle une URL directe autorisée vers un fichier vidéo, audio ou document.", 14, false);
         status.setPadding(dp(14), dp(14), dp(14), dp(14));
         status.setBackgroundColor(Color.WHITE);
-        root.addView(status, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
+        root.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         space(root, 24);
-        root.addView(text("Fonctions prévues pour Max", 17, true));
+        root.addView(text("À savoir", 17, true));
         space(root, 8);
-        root.addView(text(
-            "• Téléchargements en arrière-plan\n" +
-            "• Notifications Android\n" +
-            "• Enregistrement dans Download\n" +
-            "• Interface adaptée au thème Android\n" +
-            "• Extensions futures : file d'attente, historique et outils média",
-            14, false
-        ));
+        root.addView(text("• Les liens directs .mp4, .webm et autres fichiers sont vérifiés avant téléchargement.\n• Si le serveur renvoie une page HTML, le téléchargement est refusé.\n• Les liens de pages TikTok, Instagram, Facebook ou YouTube ne sont pas forcément des liens vidéo directs. L’extraction de ces pages nécessite un module spécifique et peut être limitée par les règles de la plateforme.\n• Les fichiers sont enregistrés dans Download.", 14, false));
 
-        download.setOnClickListener(v -> startDownload());
+        downloadButton.setOnClickListener(v -> startDownload());
         setContentView(scroll);
     }
 
     private void startDownload() {
-        String raw = urlInput.getText().toString().trim();
+        final String raw = urlInput.getText().toString().trim();
         Uri uri = Uri.parse(raw);
         String scheme = uri.getScheme();
-
         if (raw.isEmpty() || scheme == null ||
-                !(scheme.equalsIgnoreCase("https") ||
-                  scheme.equalsIgnoreCase("http")) ||
+                !(scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("http")) ||
                 uri.getHost() == null) {
             status.setText("Lien invalide. Utilise une URL HTTP ou HTTPS complète.");
             return;
         }
 
+        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(urlInput.getWindowToken(), 0);
+
+        downloadButton.setEnabled(false);
+        status.setText("Vérification du lien et du type de contenu…");
+
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL checkUrl = new URL(raw);
+                connection = (HttpURLConnection) checkUrl.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setInstanceFollowRedirects(true);
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(12000);
+                connection.setRequestProperty("Range", "bytes=0-0");
+                connection.setRequestProperty("User-Agent", "EURO-DOWNLOADER-Max/1.1 (Android)");
+                connection.connect();
+
+                int code = connection.getResponseCode();
+                String contentType = connection.getContentType();
+                String disposition = connection.getHeaderField("Content-Disposition");
+                String finalUrl = connection.getURL().toString();
+                if (code < 200 || code >= 400) {
+                    throw new IllegalStateException("Le serveur a répondu HTTP " + code + ".");
+                }
+
+                String type = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+                String finalHost = Uri.parse(finalUrl).getHost();
+                if (type.contains("text/html") || type.contains("application/xhtml")) {
+                    runOnUiThread(() -> {
+                        status.setText("Lien refusé : le site a renvoyé une page web HTML, pas le fichier vidéo. Ouvre la vidéo sur le site et utilise un lien direct de fichier si la plateforme le permet. Les liens de page ne sont pas encore extraits automatiquement.");
+                        downloadButton.setEnabled(true);
+                    });
+                    return;
+                }
+
+                String fileName = fileNameFrom(raw, disposition);
+                if (fileName == null || fileName.trim().isEmpty()) {
+                    String path = Uri.parse(finalUrl).getLastPathSegment();
+                    fileName = (path == null || path.trim().isEmpty()) ? "euro_download_" + System.currentTimeMillis() + extensionFor(type) : path;
+                    try { fileName = URLDecoder.decode(fileName, StandardCharsets.UTF_8.name()); } catch (Exception ignored) {}
+                }
+                fileName = fileName.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+                if (fileName.length() > 120) fileName = fileName.substring(0, 120);
+                if (!fileName.contains(".")) fileName += extensionFor(type);
+                final String safeName = System.currentTimeMillis() + "_" + fileName;
+                final String mimeType = type;
+                runOnUiThread(() -> enqueueDownload(finalUrl, safeName, mimeType));
+            } catch (Exception e) {
+                String message = e.getMessage() == null ? "Vérification impossible." : e.getMessage();
+                runOnUiThread(() -> {
+                    status.setText("Téléchargement non lancé : " + message + "\nLe serveur n’a pas permis de vérifier le fichier. Essaie un lien direct public en HTTPS.");
+                    downloadButton.setEnabled(true);
+                });
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
+    }
+
+    private String fileNameFrom(String raw, String disposition) {
+        if (disposition != null) {
+            String lower = disposition.toLowerCase(Locale.ROOT);
+            int index = lower.indexOf("filename=");
+            if (index >= 0) {
+                String value = disposition.substring(index + 9).trim();
+                if (value.startsWith("\"")) {
+                    int end = value.indexOf('"', 1);
+                    if (end > 1) value = value.substring(1, end);
+                } else {
+                    int semi = value.indexOf(';');
+                    if (semi >= 0) value = value.substring(0, semi).trim();
+                }
+                if (!value.isEmpty()) return value;
+            }
+        }
+        String path = Uri.parse(raw).getLastPathSegment();
+        return path;
+    }
+
+    private String extensionFor(String type) {
+        if (type.contains("video/mp4")) return ".mp4";
+        if (type.contains("video/webm")) return ".webm";
+        if (type.contains("video/quicktime")) return ".mov";
+        if (type.contains("audio/mpeg")) return ".mp3";
+        if (type.contains("audio/mp4")) return ".m4a";
+        if (type.contains("application/pdf")) return ".pdf";
+        return ".bin";
+    }
+
+    private void enqueueDownload(String url, String filename, String mimeType) {
         try {
-            InputMethodManager imm =
-                (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) imm.hideSoftInputFromWindow(urlInput.getWindowToken(), 0);
-
-            String filename = uri.getLastPathSegment();
-            if (filename != null) {
-                filename = URLDecoder.decode(filename, StandardCharsets.UTF_8.name());
-            }
-            if (filename == null || filename.trim().isEmpty() ||
-                    filename.equals(".") || filename.equals("..")) {
-                filename = "euro_download_" + System.currentTimeMillis() + ".bin";
-            }
-            filename = filename.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
-            if (filename.length() > 120) filename = filename.substring(0, 120);
-            filename = System.currentTimeMillis() + "_" + filename;
-
-            DownloadManager manager =
-                (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-            if (manager == null) {
-                status.setText("Le service de téléchargement Android est indisponible.");
-                return;
-            }
-
-            DownloadManager.Request request = new DownloadManager.Request(uri);
+            DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (manager == null) throw new IllegalStateException("Service de téléchargement Android indisponible.");
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
             request.setTitle(filename);
             request.setDescription("EURO DOWNLOADER Max");
-            request.setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalPublicDir(
-                Environment.DIRECTORY_DOWNLOADS, filename);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
             request.setAllowedOverMetered(true);
             request.setAllowedOverRoaming(false);
-
+            if (mimeType != null && !mimeType.isEmpty()) {
+                String cleanMime = mimeType.split(";")[0].trim();
+                if (cleanMime.contains("/")) request.setMimeType(cleanMime);
+            }
             long id = manager.enqueue(request);
-            status.setText("Téléchargement ajouté à Android.\nID : " + id +
-                    "\nFichier : Download/" + filename +
-                    "\nLa notification Android indiquera le résultat.");
+            status.setText("Téléchargement ajouté à Android.\nID : " + id + "\nFichier : Download/" + filename + "\nLe lien a été vérifié : aucune page HTML détectée.");
             Toast.makeText(this, "Téléchargement lancé", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            status.setText("Impossible de démarrer : " +
-                    (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            status.setText("Impossible de démarrer : " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        } finally {
+            downloadButton.setEnabled(true);
         }
     }
 }
