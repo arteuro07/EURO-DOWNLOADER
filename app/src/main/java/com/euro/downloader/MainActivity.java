@@ -3,6 +3,8 @@ package com.euro.downloader;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.provider.MediaStore;
 import android.database.Cursor;
@@ -47,7 +49,7 @@ public class MainActivity extends Activity {
         TextView t = new TextView(this);
         t.setText(value);
         t.setTextSize(size);
-        t.setTextColor(Color.rgb(30, 40, 55));
+        t.setTextColor(Color.rgb(232, 239, 250));
         if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return t;
     }
@@ -64,15 +66,17 @@ public class MainActivity extends Activity {
         scroll.setFillViewport(true);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(22), dp(28), dp(22), dp(24));
-        root.setBackgroundColor(Color.rgb(245, 248, 252));
+        root.setPadding(dp(20), dp(26), dp(20), dp(24));
+        root.setBackgroundColor(Color.rgb(10, 18, 34));
         scroll.addView(root);
 
         TextView brand = text("EURO", 16, true);
-        brand.setTextColor(Color.rgb(0, 110, 230));
+        brand.setTextColor(Color.rgb(38, 210, 170));
         root.addView(brand);
         space(root, 8);
         root.addView(text("DOWNLOADER Max", 28, true));
+        space(root, 5);
+        root.addView(text("VIDEO • AUDIO • MULTI-PLATEFORME", 12, true));
         space(root, 8);
         root.addView(text("Colle un lien de vidéo depuis YouTube, TikTok, Facebook, Instagram et de nombreux autres sites. Le moteur tente d’extraire la vidéo ; les fichiers directs restent pris en charge.", 15, false));
         space(root, 24);
@@ -85,19 +89,33 @@ public class MainActivity extends Activity {
         urlInput.setHint("https://site.com/video.mp4");
         urlInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         urlInput.setPadding(dp(14), dp(12), dp(14), dp(12));
+        urlInput.setTextColor(Color.rgb(20, 30, 45));
+        urlInput.setHintTextColor(Color.rgb(110, 120, 140));
         urlInput.setBackgroundColor(Color.WHITE);
-        root.addView(urlInput, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+        root.addView(urlInput, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
+        space(root, 8);
+        Button pasteButton = new Button(this);
+        pasteButton.setText("📋  COLLER UN LIEN");
+        root.addView(pasteButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
+        pasteButton.setOnClickListener(v -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null && clipboard.hasPrimaryClip() && clipboard.getPrimaryClip().getItemCount() > 0) {
+                CharSequence clip = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
+                if (clip != null) { urlInput.setText(clip.toString().trim()); status.setText("Lien collé. Appuie sur Analyser et télécharger."); }
+            } else { Toast.makeText(this, "Aucun lien copié dans le presse-papiers", Toast.LENGTH_SHORT).show(); }
+        });
 
         space(root, 14);
         downloadButton = new Button(this);
-        downloadButton.setText("Analyser et télécharger");
+        downloadButton.setText("⬇  ANALYSER ET TÉLÉCHARGER");
         root.addView(downloadButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
         space(root, 24);
         root.addView(text("État", 17, true));
         space(root, 8);
         status = text("Prêt. Colle un lien de vidéo public ou une URL directe.", 14, false);
         status.setPadding(dp(14), dp(14), dp(14), dp(14));
-        status.setBackgroundColor(Color.WHITE);
+        status.setTextColor(Color.rgb(35, 48, 66));
+        status.setBackgroundColor(Color.rgb(232, 239, 248));
         root.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         space(root, 24);
         root.addView(text("À savoir", 17, true));
@@ -176,6 +194,92 @@ public class MainActivity extends Activity {
                 if (connection != null) connection.disconnect();
             }
         }).start();
+    }
+
+
+    private void startExtractor(String videoUrl) {
+        runOnUiThread(() -> status.setText("Lien de page détecté. Initialisation du moteur vidéo…"));
+        new Thread(() -> {
+            File outputDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (outputDir == null) outputDir = getFilesDir();
+            if (!outputDir.exists()) outputDir.mkdirs();
+            final File targetDir = outputDir;
+            final long startTime = System.currentTimeMillis();
+            try {
+                YtDlp.init(getApplicationContext());
+                String template = new File(targetDir, "%(title).180B.%(ext)s").getAbsolutePath();
+                YtDlpRequest request = new YtDlpRequest(videoUrl)
+                        .setOutputTemplate(template)
+                        .addOption("-f", "best[height<=1080]/best")
+                        .addOption("--no-playlist")
+                        .addOption("--no-warnings")
+                        .addOption("--newline");
+                runOnUiThread(() -> status.setText("Analyse de la page… recherche du flux vidéo."));
+                Future<YtDlpResponse> task = YtDlp.executeAsync(request, (progress, eta, line) -> {
+                    final String detail = (line == null || line.trim().isEmpty()) ? "" : "\\n" + line;
+                    runOnUiThread(() -> status.setText("TÉLÉCHARGEMENT : " + Math.round(progress) + "%\\n" +
+                            (eta > 0 ? "Temps restant estimé : " + eta + " s" : "Extraction en cours") + detail));
+                });
+                YtDlpResponse response = task.get();
+                if (response == null || !response.isSuccess()) {
+                    throw new IllegalStateException("Extraction impossible. Le site peut être incompatible, privé ou nécessiter une connexion.");
+                }
+                File[] files = targetDir.listFiles();
+                File newest = null;
+                if (files != null) for (File file : files) {
+                    if (file.isFile() && !file.getName().endsWith(".part") &&
+                            file.lastModified() >= startTime - 1000 &&
+                            (newest == null || file.lastModified() > newest.lastModified())) newest = file;
+                }
+                if (newest == null || newest.length() == 0) throw new IllegalStateException("Aucun fichier vidéo final n’a été trouvé.");
+                final File downloaded = newest;
+                copyToPublicDownloads(downloaded);
+                runOnUiThread(() -> {
+                    status.setText("✓ TÉLÉCHARGEMENT TERMINÉ\\n\\nFichier : Download/" + downloaded.getName());
+                    downloadButton.setEnabled(true);
+                    Toast.makeText(this, "Vidéo enregistrée dans Download", Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception e) {
+                String msg = e.getMessage();
+                if (msg == null || msg.trim().isEmpty()) msg = e.getClass().getSimpleName();
+                final String error = msg;
+                runOnUiThread(() -> {
+                    status.setText("ÉCHEC DE L’EXTRACTION\\n" + error + "\\nEssaie un lien public accessible. Certaines plateformes imposent des restrictions.");
+                    downloadButton.setEnabled(true);
+                });
+            }
+        }).start();
+    }
+
+    private void copyToPublicDownloads(File source) throws Exception {
+        String lowerName = source.getName().toLowerCase(Locale.ROOT);
+        String mime = lowerName.endsWith(".mp4") ? "video/mp4" :
+                lowerName.endsWith(".webm") ? "video/webm" :
+                lowerName.endsWith(".mkv") ? "video/x-matroska" :
+                lowerName.endsWith(".mp3") ? "audio/mpeg" : "application/octet-stream";
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Downloads.DISPLAY_NAME, source.getName());
+        values.put(MediaStore.Downloads.MIME_TYPE, mime);
+        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+        if (Build.VERSION.SDK_INT >= 29) values.put(MediaStore.Downloads.IS_PENDING, 1);
+        Uri destination = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (destination == null) throw new IllegalStateException("Impossible de créer le fichier dans Download.");
+        try (FileInputStream in = new FileInputStream(source);
+             OutputStream out = getContentResolver().openOutputStream(destination)) {
+            if (out == null) throw new IllegalStateException("Impossible d’écrire dans Download.");
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            out.flush();
+        } catch (Exception e) {
+            getContentResolver().delete(destination, null, null);
+            throw e;
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues ready = new ContentValues();
+            ready.put(MediaStore.Downloads.IS_PENDING, 0);
+            getContentResolver().update(destination, ready, null, null);
+        }
     }
 
     private String fileNameFrom(String raw, String disposition) {
